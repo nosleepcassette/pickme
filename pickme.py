@@ -26,9 +26,14 @@ except ImportError:
     pygame = None
 
 try:
-    import simpleaudio as sa
+    import sounddevice as sd
 except ImportError:
-    sa = None
+    sd = None
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 APP_NAME = "pickme"
 VERSION = "2.4"
@@ -940,51 +945,42 @@ class TrainerApp:
         self.status = "Ready."
         self.sound_cache = {}
         self.audio_backend = None
+        self.sample_rate = 44100
         self.init_audio()
 
-    def init_audio(self):
-        SOUND_DIR.mkdir(exist_ok=True)
-        metronome_path = SOUND_DIR / "metronome.wav"
-        if not metronome_path.exists():
-            sample_rate = 44100
-            duration = 0.06
-            n_samples = int(sample_rate * duration)
-            frames = bytearray(n_samples * 2)
-            for i in range(n_samples):
-                t = i / sample_rate
-                env = math.exp(-t / 0.02)
-                val = math.sin(2 * math.pi * 880 * t)
-                struct.pack_into("<h", frames, i * 2, int(3000 * env * val))
-            with wave.open(str(metronome_path), "w") as w:
-                w.setnchannels(1)
-                w.setsampwidth(2)
-                w.setframerate(sample_rate)
-                w.writeframesraw(frames)
-        self.metronome_path = metronome_path
+    def generate_tone(
+        self, freq: float, duration: float = 0.3, volume: float = 0.5
+    ) -> np.ndarray:
+        if np is None:
+            return None
+        t = np.linspace(0, duration, int(self.sample_rate * duration), False)
+        envelope = np.exp(-t / (duration * 0.4))
+        tone = np.sin(2 * np.pi * freq * t) * envelope * volume
+        return tone.astype(np.float32)
 
-        if sa is not None:
+    def init_audio(self):
+        if sd is not None and np is not None:
             try:
-                self.metronome_wave = sa.WaveObject.from_wave_file(str(metronome_path))
-                self.audio_backend = "simpleaudio"
+                sd.play(np.zeros(1), self.sample_rate)
+                sd.stop()
+                self.audio_backend = "sounddevice"
                 return
             except Exception:
                 pass
-
         self.audio_backend = "afplay"
 
     def play_sound(self, path: Path):
-        if not path or not path.exists():
-            return
-
-        if self.audio_backend == "simpleaudio" and sa is not None:
+        if self.audio_backend == "sounddevice" and sd is not None and np is not None:
             try:
-                wave_obj = sa.WaveObject.from_wave_file(str(path))
-                wave_obj.play()
-                return
+                string_name = path.stem.split("_")[0]
+                fret = path.stem.split("_")[1]
+                freq = self.get_frequency(string_name, fret)
+                tone = self.generate_tone(freq, 0.3, 0.4)
+                if tone is not None:
+                    sd.play(tone, self.sample_rate)
             except Exception:
                 pass
-
-        if self.audio_backend == "afplay":
+        elif self.audio_backend == "afplay":
             import subprocess
 
             try:
@@ -993,6 +989,82 @@ class TrainerApp:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+            except Exception:
+                pass
+
+    def get_frequency(self, string_name: str, fret: str) -> float:
+        base_freqs = {
+            "E": 82.41,
+            "A": 110.00,
+            "D": 146.83,
+            "G": 196.00,
+            "B": 246.94,
+            "e": 329.63,
+        }
+        try:
+            fret_val = int(fret)
+        except (ValueError, TypeError):
+            fret_val = 0
+        base_f = base_freqs.get(string_name, 440.0)
+        return base_f * (2 ** (fret_val / 12.0))
+
+    def play_metronome_sound(self):
+        if self.audio_backend == "sounddevice" and sd is not None and np is not None:
+            try:
+                tone = self.generate_tone(880, 0.05, 0.2)
+                if tone is not None:
+                    sd.play(tone, self.sample_rate)
+            except Exception:
+                pass
+        elif self.audio_backend == "afplay":
+            import subprocess
+
+            try:
+                SOUND_DIR.mkdir(exist_ok=True)
+                m_path = SOUND_DIR / "metronome.wav"
+                if not m_path.exists():
+                    import wave
+
+                    n_samples = int(self.sample_rate * 0.05)
+                    frames = bytearray(n_samples * 2)
+                    for i in range(n_samples):
+                        t = i / self.sample_rate
+                        env = math.exp(-t / 0.015)
+                        val = math.sin(2 * math.pi * 880 * t)
+                        struct.pack_into("<h", frames, i * 2, int(2000 * env * val))
+                    with wave.open(str(m_path), "w") as w:
+                        w.setnchannels(1)
+                        w.setsampwidth(2)
+                        w.setframerate(self.sample_rate)
+                        w.writeframesraw(frames)
+                subprocess.Popen(
+                    ["afplay", "-q", "1", str(m_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass
+
+    def play_note_sound(self, string_name: str, fret: str):
+        if self.audio_backend == "sounddevice" and sd is not None and np is not None:
+            try:
+                freq = self.get_frequency(string_name, fret)
+                tone = self.generate_tone(freq, 0.3, 0.4)
+                if tone is not None:
+                    sd.play(tone, self.sample_rate)
+            except Exception:
+                pass
+        elif self.audio_backend == "afplay":
+            import subprocess
+
+            try:
+                wav_path = get_note_wav(string_name, fret)
+                if wav_path:
+                    subprocess.Popen(
+                        ["afplay", "-q", "1", str(wav_path)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
             except Exception:
                 pass
 
@@ -1063,15 +1135,13 @@ class TrainerApp:
             if self.timing_mode == "beat" or (
                 self.playhead % (lesson_obj.steps_per_bar // 4) == 0
             ):
-                if self.play_metronome and hasattr(self, "metronome_path"):
-                    self.play_sound(self.metronome_path)
+                if self.play_metronome:
+                    self.play_metronome_sound()
 
             if self.play_audio:
                 notes = self.current_notes_map.get(self.playhead, {})
                 for string_name, fret in notes.items():
-                    wav_path = get_note_wav(string_name, fret)
-                    if wav_path:
-                        self.play_sound(wav_path)
+                    self.play_note_sound(string_name, fret)
 
             self.playhead += 1
             self.last_tick += interval
