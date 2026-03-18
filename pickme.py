@@ -967,13 +967,14 @@ class TrainerApp:
 
     def init_audio(self):
         if self.audio_backend == "pygame" and pygame is not None:
-            try:
-                pygame.mixer.pre_init(44100, -16, 2, 512)
-                pygame.init()
-                pygame.mixer.init()
-                self.pygame_ready = True
-            except Exception:
-                self.pygame_ready = False
+            if not getattr(self, "pygame_ready", False):
+                try:
+                    pygame.mixer.pre_init(44100, -16, 2, 512)
+                    pygame.init()
+                    pygame.mixer.init()
+                    self.pygame_ready = True
+                except Exception:
+                    self.pygame_ready = False
         elif self.audio_backend == "sounddevice" and sd is not None and np is not None:
             try:
                 sd.play(np.zeros(1), self.sample_rate)
@@ -1151,10 +1152,16 @@ class TrainerApp:
         self.current_notes_map = event_notes_by_step(self.lessons[self.player_index])
         self.playhead = 0
         self.last_tick = time.time()
+        
         if self.play_audio:
+            h, w = self.stdscr.getmaxyx()
+            msg = "Generating audio, one moment..."
+            safe_addstr(self.stdscr, h // 2, (w - len(msg)) // 2, msg, curses.A_BOLD | curses.A_BLINK)
+            self.stdscr.refresh()
             for step, notes in self.current_notes_map.items():
                 for s_name, fret in notes.items():
                     get_note_wav(s_name, fret)
+            self.get_metronome_wav()
 
     @property
     def timing_mode(self) -> str:
@@ -1750,10 +1757,10 @@ def main():
 
     backend = args.audio_backend
     if backend == "auto":
-        if pygame is not None:
-            backend = "pygame"
-        elif sa is not None:
+        if sa is not None:
             backend = "simpleaudio"
+        elif pygame is not None:
+            backend = "pygame"
         elif shutil.which("afplay"):
             backend = "afplay"
         elif sd is not None and np is not None:
@@ -1763,7 +1770,24 @@ def main():
 
     print(f"Using audio backend: {backend}")
 
-    if pygame is None and backend == "pygame":
+    if sa is None and backend == "simpleaudio":
+        print(f"--- {APP_NAME} v{VERSION} Dependency Warning ---")
+        print("The 'simpleaudio' library is required for simpleaudio audio backend.")
+        if pip_cmd:
+            install_cmd = f"{pip_cmd} install simpleaudio"
+            answer = input(f"Would you like to run '{install_cmd}' now? [Y/n] ")
+            if answer.lower().strip() in ["y", "yes", ""]:
+                os.system(install_cmd)
+                print("\nInstallation complete. Re-launching app...")
+                import sys
+
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            else:
+                print("Audio will be disabled.")
+        else:
+            print("Could not find 'pip' or 'pip3'. Please install simpleaudio manually.")
+        input("Press Enter to continue...")
+    elif pygame is None and backend == "pygame":
         print(f"--- {APP_NAME} v{VERSION} Dependency Warning ---")
         print("The 'pygame' library is required for pygame audio backend.")
         if pip_cmd:
