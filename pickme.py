@@ -35,6 +35,11 @@ try:
 except ImportError:
     np = None
 
+try:
+    import simpleaudio as sa
+except ImportError:
+    sa = None
+
 APP_NAME = "pickme"
 VERSION = "2.4"
 STRING_ORDER = ["e", "B", "G", "D", "A", "E"]
@@ -903,7 +908,7 @@ def safe_addstr(stdscr, y: int, x: int, text: str, attr: int = 0):
 
 
 class TrainerApp:
-    def __init__(self, stdscr):
+    def __init__(self, stdscr, audio_backend="auto"):
         self.stdscr = stdscr
         self.view = "library"
         self.library_index = 0
@@ -921,6 +926,7 @@ class TrainerApp:
 
         self.play_metronome = False
         self.play_audio = True
+        self.audio_backend = audio_backend
         self.current_notes_map = {}
 
         self.loop_a = None
@@ -959,38 +965,94 @@ class TrainerApp:
         return tone.astype(np.float32)
 
     def init_audio(self):
-        if sd is not None and np is not None:
+        if self.audio_backend == "pygame" and pygame is not None:
+            try:
+                pygame.mixer.pre_init(44100, -16, 2, 512)
+                pygame.init()
+                pygame.mixer.init()
+                self.pygame_ready = True
+            except Exception:
+                self.pygame_ready = False
+        elif self.audio_backend == "sounddevice" and sd is not None and np is not None:
             try:
                 sd.play(np.zeros(1), self.sample_rate)
                 sd.stop()
-                self.audio_backend = "sounddevice"
-                return
             except Exception:
                 pass
-        self.audio_backend = "afplay"
+        elif self.audio_backend == "simpleaudio" and sa is not None:
+            SOUND_DIR.mkdir(exist_ok=True)
 
-    def play_sound(self, path: Path):
-        if self.audio_backend == "sounddevice" and sd is not None and np is not None:
-            try:
-                string_name = path.stem.split("_")[0]
-                fret = path.stem.split("_")[1]
-                freq = self.get_frequency(string_name, fret)
-                tone = self.generate_tone(freq, 0.3, 0.4)
-                if tone is not None:
-                    sd.play(tone, self.sample_rate)
-            except Exception:
-                pass
-        elif self.audio_backend == "afplay":
-            import subprocess
+    def play_note_pygame(self, freq: float):
+        if not hasattr(self, "pygame_ready") or not self.pygame_ready:
+            return
+        try:
+            tone = self.generate_tone(freq, 0.3, 0.4)
+            if tone is not None:
+                import io
+                import wave as wave_module
 
-            try:
+                buffer = io.BytesIO()
+                with wave_module.open(buffer, "w") as w:
+                    w.setnchannels(1)
+                    w.setsampwidth(2)
+                    w.setframerate(self.sample_rate)
+                    w.writeframes(tone.astype(np.int16).tobytes())
+                buffer.seek(0)
+                sound = pygame.mixer.Sound(buffer)
+                sound.play()
+        except Exception:
+            pass
+
+    def play_note_sounddevice(self, freq: float):
+        try:
+            tone = self.generate_tone(freq, 0.3, 0.4)
+            if tone is not None:
+                sd.play(tone, self.sample_rate)
+                sd.sleep(50)
+        except Exception:
+            pass
+
+    def play_note_simpleaudio(self, freq: float):
+        try:
+            tone = self.generate_tone(freq, 0.3, 0.4)
+            if tone is not None:
+                import io
+                import wave as wave_module
+
+                buffer = io.BytesIO()
+                with wave_module.open(buffer, "w") as w:
+                    w.setnchannels(1)
+                    w.setsampwidth(2)
+                    w.setframerate(self.sample_rate)
+                    w.writeframes(tone.astype(np.int16).tobytes())
+                buffer.seek(0)
+                wave_obj = sa.WaveObject.from_wave_file(buffer)
+                wave_obj.play()
+        except Exception:
+            pass
+
+    def play_note_afplay(self, freq: float):
+        import subprocess
+
+        try:
+            SOUND_DIR.mkdir(exist_ok=True)
+            path = SOUND_DIR / f"temp_{int(freq)}.wav"
+            tone = self.generate_tone(freq, 0.3, 0.4)
+            if tone is not None:
+                import wave as wave_module
+
+                with wave_module.open(str(path), "w") as w:
+                    w.setnchannels(1)
+                    w.setsampwidth(2)
+                    w.setframerate(self.sample_rate)
+                    w.writeframes(tone.astype(np.int16).tobytes())
                 subprocess.Popen(
                     ["afplay", "-q", "1", str(path)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     def get_frequency(self, string_name: str, fret: str) -> float:
         base_freqs = {
@@ -1009,13 +1071,13 @@ class TrainerApp:
         return base_f * (2 ** (fret_val / 12.0))
 
     def play_metronome_sound(self):
-        if self.audio_backend == "sounddevice" and sd is not None and np is not None:
-            try:
-                tone = self.generate_tone(880, 0.05, 0.2)
-                if tone is not None:
-                    sd.play(tone, self.sample_rate)
-            except Exception:
-                pass
+        freq = 880
+        if self.audio_backend == "pygame":
+            self.play_note_pygame(freq)
+        elif self.audio_backend == "sounddevice":
+            self.play_note_sounddevice(freq)
+        elif self.audio_backend == "simpleaudio":
+            self.play_note_simpleaudio(freq)
         elif self.audio_backend == "afplay":
             import subprocess
 
@@ -1046,27 +1108,15 @@ class TrainerApp:
                 pass
 
     def play_note_sound(self, string_name: str, fret: str):
-        if self.audio_backend == "sounddevice" and sd is not None and np is not None:
-            try:
-                freq = self.get_frequency(string_name, fret)
-                tone = self.generate_tone(freq, 0.3, 0.4)
-                if tone is not None:
-                    sd.play(tone, self.sample_rate)
-            except Exception:
-                pass
+        freq = self.get_frequency(string_name, fret)
+        if self.audio_backend == "pygame":
+            self.play_note_pygame(freq)
+        elif self.audio_backend == "sounddevice":
+            self.play_note_sounddevice(freq)
+        elif self.audio_backend == "simpleaudio":
+            self.play_note_simpleaudio(freq)
         elif self.audio_backend == "afplay":
-            import subprocess
-
-            try:
-                wav_path = get_note_wav(string_name, fret)
-                if wav_path:
-                    subprocess.Popen(
-                        ["afplay", "-q", "1", str(wav_path)],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-            except Exception:
-                pass
+            self.play_note_afplay(freq)
 
     def load_generated_lessons(self) -> List[Lesson]:
         lessons = []
@@ -1678,16 +1728,34 @@ def main():
     parser.add_argument(
         "--validate", action="store_true", help="run non-interactive validation"
     )
+    parser.add_argument(
+        "--audio-backend",
+        choices=["pygame", "sounddevice", "simpleaudio", "afplay", "auto"],
+        default="auto",
+        help="audio backend to use (default: auto)",
+    )
     args = parser.parse_args()
 
     if args.validate:
         print("Validation OK")
         return
 
-    # Dependency check before curses
-    if pygame is None:
+    backend = args.audio_backend
+    if backend == "auto":
+        if pygame is not None:
+            backend = "pygame"
+        elif sd is not None and np is not None:
+            backend = "sounddevice"
+        elif sa is not None:
+            backend = "simpleaudio"
+        else:
+            backend = "afplay"
+
+    print(f"Using audio backend: {backend}")
+
+    if pygame is None and backend == "pygame":
         print(f"--- {APP_NAME} v{VERSION} Dependency Warning ---")
-        print("The 'pygame' library is required for audio playback.")
+        print("The 'pygame' library is required for pygame audio backend.")
         if pip_cmd:
             install_cmd = f"{pip_cmd} install pygame"
             answer = input(f"Would you like to run '{install_cmd}' now? [Y/n] ")
@@ -1698,12 +1766,12 @@ def main():
 
                 os.execv(sys.executable, [sys.executable] + sys.argv)
             else:
-                print("Audio will be disabled. You can install it manually later.")
+                print("Audio will be disabled.")
         else:
             print("Could not find 'pip' or 'pip3'. Please install pygame manually.")
-        input("Press Enter to continue without audio...")
+        input("Press Enter to continue...")
 
-    curses.wrapper(lambda stdscr: TrainerApp(stdscr).run())
+    curses.wrapper(lambda stdscr: TrainerApp(stdscr, backend).run())
 
 
 if __name__ == "__main__":
