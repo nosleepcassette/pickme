@@ -951,7 +951,7 @@ class TrainerApp:
         }
         self.status = "Ready."
         self.sound_cache = {}
-        self.audio_backend = None
+        self.audio_backend = audio_backend
         self.sample_rate = 44100
         self.init_audio()
 
@@ -1032,21 +1032,14 @@ class TrainerApp:
         except Exception:
             pass
 
-    def play_note_afplay(self, freq: float):
+    def play_note_afplay(self, string_name: str, fret: str):
         import subprocess
 
         try:
-            SOUND_DIR.mkdir(exist_ok=True)
-            path = SOUND_DIR / f"temp_{int(freq)}.wav"
-            tone = self.generate_tone(freq, 0.3, 0.4)
-            if tone is not None:
-                import wave as wave_module
-
-                with wave_module.open(str(path), "w") as w:
-                    w.setnchannels(1)
-                    w.setsampwidth(2)
-                    w.setframerate(self.sample_rate)
-                    w.writeframes(tone.astype(np.int16).tobytes())
+            path = SOUND_DIR / f"{string_name}_{fret}.wav"
+            if not path.exists():
+                get_note_wav(string_name, fret)
+            if path.exists():
                 subprocess.Popen(
                     ["afplay", "-q", "1", str(path)],
                     stdout=subprocess.DEVNULL,
@@ -1109,6 +1102,10 @@ class TrainerApp:
                 pass
 
     def play_note_sound(self, string_name: str, fret: str):
+        if self.audio_backend == "afplay":
+            self.play_note_afplay(string_name, fret)
+            return
+
         freq = self.get_frequency(string_name, fret)
         if self.audio_backend == "pygame":
             self.play_note_pygame(freq)
@@ -1116,8 +1113,6 @@ class TrainerApp:
             self.play_note_sounddevice(freq)
         elif self.audio_backend == "simpleaudio":
             self.play_note_simpleaudio(freq)
-        elif self.audio_backend == "afplay":
-            self.play_note_afplay(freq)
 
     def load_generated_lessons(self) -> List[Lesson]:
         lessons = []
@@ -1725,10 +1720,16 @@ class TrainerApp:
             self.stdscr.nodelay(True)
             ch = self.stdscr.getch()
             if ch != -1:
-                curses.curs_set(1)
+                try:
+                    curses.curs_set(1)
+                except curses.error:
+                    pass
                 if not self.handle_key(ch):
                     break
-                curses.curs_set(0)
+                try:
+                    curses.curs_set(0)
+                except curses.error:
+                    pass
             time.sleep(0.01)
 
 
@@ -1755,10 +1756,12 @@ def main():
     if backend == "auto":
         if pygame is not None:
             backend = "pygame"
-        elif sd is not None and np is not None:
-            backend = "sounddevice"
         elif sa is not None:
             backend = "simpleaudio"
+        elif shutil.which("afplay"):
+            backend = "afplay"
+        elif sd is not None and np is not None:
+            backend = "sounddevice"
         else:
             backend = "afplay"
 
