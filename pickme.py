@@ -940,29 +940,29 @@ class TrainerApp:
         if not pygame:
             return
         try:
-            pygame.mixer.pre_init(44100, -16, 2, 2048)
+            pygame.mixer.pre_init(44100, -16, 2, 4096)
             pygame.init()
-            pygame.mixer.init()
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=4096)
             pygame.mixer.set_num_channels(16)
-            pygame.mixer.set_reserved(2)
             metronome_path = SOUND_DIR / "metronome.wav"
             if not metronome_path.exists():
                 SOUND_DIR.mkdir(exist_ok=True)
                 sample_rate = 44100
-                duration = 0.05
+                duration = 0.15
                 n_samples = int(sample_rate * duration)
                 frames = bytearray(n_samples * 2)
                 for i in range(n_samples):
                     t = i / sample_rate
-                    env = math.exp(-t / 0.02)
+                    env = math.exp(-t / 0.05)
                     val = math.sin(2 * math.pi * 880 * t)
-                    struct.pack_into("<h", frames, i * 2, int(8000 * env * val))
+                    struct.pack_into("<h", frames, i * 2, int(5000 * env * val))
                 with wave.open(str(metronome_path), "w") as w:
                     w.setnchannels(1)
                     w.setsampwidth(2)
                     w.setframerate(sample_rate)
                     w.writeframesraw(frames)
             self.metronome_sound = pygame.mixer.Sound(str(metronome_path))
+            self.metronome_sound.set_volume(0.3)
         except Exception as e:
             self.play_audio = False
             self.status = f"Audio init failed: {e}"
@@ -1052,13 +1052,18 @@ class TrainerApp:
                     self.metronome_sound.play()
 
             if self.play_audio and pygame:
+                for i in range(pygame.mixer.get_num_channels()):
+                    channel = pygame.mixer.Channel(i)
+                    if channel.get_busy():
+                        channel.stop()
                 notes = self.current_notes_map.get(self.playhead, {})
                 for string_name, fret in notes.items():
                     wav_path = get_note_wav(string_name, fret)
                     if wav_path:
                         snd = self.load_sound(wav_path)
                         if snd:
-                            snd.play()
+                            snd.set_volume(0.4)
+                            snd.play(fade_ms=30)
 
             self.playhead += 1
             self.last_tick += interval
@@ -1395,7 +1400,7 @@ class TrainerApp:
             lesson = self.lessons[self.library_index]
             if lesson.generated:
                 self.rename_mode = True
-                self.rename_buffer = lesson.title
+                self.rename_buffer = ""
             else:
                 self.status = "Cannot rename built-in lessons."
         elif ch == ord("d"):
