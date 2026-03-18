@@ -983,51 +983,42 @@ class TrainerApp:
         elif self.audio_backend == "simpleaudio" and sa is not None:
             SOUND_DIR.mkdir(exist_ok=True)
 
-    def play_note_pygame(self, freq: float):
-        if not hasattr(self, "pygame_ready") or not self.pygame_ready:
+    def play_note_pygame(self, string_name: str, fret: str):
+        if not getattr(self, "pygame_ready", False):
             return
         try:
-            tone = self.generate_tone(freq, 0.3, 0.4)
-            if tone is not None:
-                import io
-                import wave as wave_module
-
-                buffer = io.BytesIO()
-                with wave_module.open(buffer, "w") as w:
-                    w.setnchannels(1)
-                    w.setsampwidth(2)
-                    w.setframerate(self.sample_rate)
-                    w.writeframes(tone.astype(np.int16).tobytes())
-                buffer.seek(0)
-                sound = pygame.mixer.Sound(buffer)
+            cache_key = f"{string_name}_{fret}"
+            if cache_key not in self.sound_cache:
+                path = get_note_wav(string_name, fret)
+                if path and path.exists():
+                    self.sound_cache[cache_key] = pygame.mixer.Sound(str(path))
+            
+            sound = self.sound_cache.get(cache_key)
+            if sound:
                 sound.play()
         except Exception:
             pass
 
-    def play_note_sounddevice(self, freq: float):
+    def play_note_sounddevice(self, string_name: str, fret: str):
         try:
+            freq = self.get_frequency(string_name, fret)
             tone = self.generate_tone(freq, 0.3, 0.4)
             if tone is not None:
                 sd.play(tone, self.sample_rate)
-                sd.sleep(50)
+                # Removing sd.sleep() to prevent blocking the main loop
         except Exception:
             pass
 
-    def play_note_simpleaudio(self, freq: float):
+    def play_note_simpleaudio(self, string_name: str, fret: str):
         try:
-            tone = self.generate_tone(freq, 0.3, 0.4)
-            if tone is not None:
-                import io
-                import wave as wave_module
-
-                buffer = io.BytesIO()
-                with wave_module.open(buffer, "w") as w:
-                    w.setnchannels(1)
-                    w.setsampwidth(2)
-                    w.setframerate(self.sample_rate)
-                    w.writeframes(tone.astype(np.int16).tobytes())
-                buffer.seek(0)
-                wave_obj = sa.WaveObject.from_wave_file(buffer)
+            cache_key = f"{string_name}_{fret}"
+            if cache_key not in self.sound_cache:
+                path = get_note_wav(string_name, fret)
+                if path and path.exists():
+                    self.sound_cache[cache_key] = sa.WaveObject.from_wave_file(str(path))
+            
+            wave_obj = self.sound_cache.get(cache_key)
+            if wave_obj:
                 wave_obj.play()
         except Exception:
             pass
@@ -1064,55 +1055,60 @@ class TrainerApp:
         base_f = base_freqs.get(string_name, 440.0)
         return base_f * (2 ** (fret_val / 12.0))
 
+    def get_metronome_wav(self) -> Path:
+        SOUND_DIR.mkdir(exist_ok=True)
+        m_path = SOUND_DIR / "metronome.wav"
+        if not m_path.exists():
+            import wave
+            n_samples = int(self.sample_rate * 0.05)
+            frames = bytearray(n_samples * 2)
+            for i in range(n_samples):
+                t = i / self.sample_rate
+                env = math.exp(-t / 0.015)
+                val = math.sin(2 * math.pi * 880 * t)
+                struct.pack_into("<h", frames, i * 2, int(2000 * env * val))
+            with wave.open(str(m_path), "w") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(self.sample_rate)
+                w.writeframesraw(frames)
+        return m_path
+
     def play_metronome_sound(self):
-        freq = 880
-        if self.audio_backend == "pygame":
-            self.play_note_pygame(freq)
-        elif self.audio_backend == "sounddevice":
-            self.play_note_sounddevice(freq)
-        elif self.audio_backend == "simpleaudio":
-            self.play_note_simpleaudio(freq)
-        elif self.audio_backend == "afplay":
-            import subprocess
-
-            try:
-                SOUND_DIR.mkdir(exist_ok=True)
-                m_path = SOUND_DIR / "metronome.wav"
-                if not m_path.exists():
-                    import wave
-
-                    n_samples = int(self.sample_rate * 0.05)
-                    frames = bytearray(n_samples * 2)
-                    for i in range(n_samples):
-                        t = i / self.sample_rate
-                        env = math.exp(-t / 0.015)
-                        val = math.sin(2 * math.pi * 880 * t)
-                        struct.pack_into("<h", frames, i * 2, int(2000 * env * val))
-                    with wave.open(str(m_path), "w") as w:
-                        w.setnchannels(1)
-                        w.setsampwidth(2)
-                        w.setframerate(self.sample_rate)
-                        w.writeframesraw(frames)
+        try:
+            m_path = self.get_metronome_wav()
+            if self.audio_backend == "pygame" and getattr(self, "pygame_ready", False):
+                if "metro" not in self.sound_cache:
+                    self.sound_cache["metro"] = pygame.mixer.Sound(str(m_path))
+                self.sound_cache["metro"].play()
+            elif self.audio_backend == "simpleaudio":
+                if "metro" not in self.sound_cache:
+                    self.sound_cache["metro"] = sa.WaveObject.from_wave_file(str(m_path))
+                self.sound_cache["metro"].play()
+            elif self.audio_backend == "afplay":
+                import subprocess
                 subprocess.Popen(
                     ["afplay", "-q", "1", str(m_path)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-            except Exception:
-                pass
+            elif self.audio_backend == "sounddevice":
+                freq = 880
+                tone = self.generate_tone(freq, 0.05, 0.8)
+                if tone is not None:
+                    sd.play(tone, self.sample_rate)
+        except Exception:
+            pass
 
     def play_note_sound(self, string_name: str, fret: str):
         if self.audio_backend == "afplay":
             self.play_note_afplay(string_name, fret)
-            return
-
-        freq = self.get_frequency(string_name, fret)
-        if self.audio_backend == "pygame":
-            self.play_note_pygame(freq)
+        elif self.audio_backend == "pygame":
+            self.play_note_pygame(string_name, fret)
         elif self.audio_backend == "sounddevice":
-            self.play_note_sounddevice(freq)
+            self.play_note_sounddevice(string_name, fret)
         elif self.audio_backend == "simpleaudio":
-            self.play_note_simpleaudio(freq)
+            self.play_note_simpleaudio(string_name, fret)
 
     def load_generated_lessons(self) -> List[Lesson]:
         lessons = []
