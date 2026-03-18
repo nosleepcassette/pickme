@@ -31,6 +31,7 @@ STRING_ORDER = ["e", "B", "G", "D", "A", "E"]
 STRING_TO_FINGER = {"e": "3", "B": "2", "G": "1", "D": "0", "A": "0", "E": "0"}
 FINGER_NAMES = {0: "T", 1: "1", 2: "2", 3: "3", 4: "4"}
 STRING_TO_RIGHT_FINGER = {"e": "4", "B": "3", "G": "2", "D": "1", "A": "0", "E": "0"}
+FINGER_LOOKUP = {k.lower(): v for k, v in STRING_TO_RIGHT_FINGER.items()}
 CELL_WIDTH = 3
 TIMING_MODES = ["beat", "subdivision", "note"]
 SOUND_DIR = Path.home() / ".pickme_sounds"
@@ -818,8 +819,9 @@ def get_note_wav(string_name: str, fret: str) -> Optional[Path]:
     base_f = base_freqs.get(string_name, 440.0)
     freq = base_f * (2 ** (fret_val / 12.0))
     sample_rate = 44100
-    duration = 0.5
+    duration = 0.8
     n_samples = int(sample_rate * duration)
+    decay = sample_rate * 0.4
 
     with wave.open(str(filepath), "w") as w:
         w.setnchannels(1)
@@ -828,11 +830,9 @@ def get_note_wav(string_name: str, fret: str) -> Optional[Path]:
         frames = bytearray(n_samples * 2)
         for i in range(n_samples):
             t = float(i) / sample_rate
-            env = math.exp(-i / (sample_rate * 0.3))
-            val = math.sin(2 * math.pi * freq * t) + 0.3 * math.sin(
-                2 * math.pi * freq * 2 * t
-            )
-            struct.pack_into("<h", frames, i * 2, int(12000 * env * val))
+            env = math.exp(-i / decay)
+            val = math.sin(2 * math.pi * freq * t)
+            struct.pack_into("<h", frames, i * 2, int(8000 * env * val))
         w.writeframesraw(frames)
     return filepath
 
@@ -934,22 +934,23 @@ class TrainerApp:
         }
         self.status = "Ready."
         self.sound_cache = {}
-        self.metronome_sound = None
         self.init_audio()
 
     def init_audio(self):
+        import subprocess
+
         SOUND_DIR.mkdir(exist_ok=True)
         metronome_path = SOUND_DIR / "metronome.wav"
         if not metronome_path.exists():
             sample_rate = 44100
-            duration = 0.1
+            duration = 0.08
             n_samples = int(sample_rate * duration)
             frames = bytearray(n_samples * 2)
             for i in range(n_samples):
                 t = i / sample_rate
-                env = math.exp(-t / 0.03)
+                env = math.exp(-t / 0.025)
                 val = math.sin(2 * math.pi * 880 * t)
-                struct.pack_into("<h", frames, i * 2, int(6000 * env * val))
+                struct.pack_into("<h", frames, i * 2, int(4000 * env * val))
             with wave.open(str(metronome_path), "w") as w:
                 w.setnchannels(1)
                 w.setsampwidth(2)
@@ -960,17 +961,16 @@ class TrainerApp:
     def play_sound(self, path: Path):
         import subprocess
 
+        if not path or not path.exists():
+            return
         try:
-            subprocess.Popen(
+            subprocess.run(
                 ["afplay", "-q", "1", str(path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                timeout=1,
+                capture_output=True,
             )
         except Exception:
             pass
-
-    def load_sound(self, path: Path):
-        return path
 
     def load_generated_lessons(self) -> List[Lesson]:
         lessons = []
@@ -1013,12 +1013,10 @@ class TrainerApp:
         self.current_notes_map = event_notes_by_step(self.lessons[self.player_index])
         self.playhead = 0
         self.last_tick = time.time()
-        if pygame and self.play_audio:
+        if self.play_audio:
             for step, notes in self.current_notes_map.items():
                 for s_name, fret in notes.items():
-                    wav_path = get_note_wav(s_name, fret)
-                    if wav_path:
-                        self.load_sound(wav_path)
+                    get_note_wav(s_name, fret)
 
     @property
     def timing_mode(self) -> str:
@@ -1235,7 +1233,7 @@ class TrainerApp:
             notes = self.current_notes_map.get(step, {})
             fingers_used = set()
             for s_name in notes.keys():
-                f = STRING_TO_RIGHT_FINGER.get(s_name)
+                f = FINGER_LOOKUP.get(s_name.lower())
                 if f is not None:
                     fingers_used.add(int(f))
             if fingers_used:
