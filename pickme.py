@@ -30,6 +30,7 @@ VERSION = "2.4"
 STRING_ORDER = ["e", "B", "G", "D", "A", "E"]
 STRING_TO_FINGER = {"e": "3", "B": "2", "G": "1", "D": "0", "A": "0", "E": "0"}
 FINGER_NAMES = {0: "T", 1: "1", 2: "2", 3: "3", 4: "4"}
+STRING_TO_RIGHT_FINGER = {"e": "4", "B": "3", "G": "2", "D": "1", "A": "0", "E": "0"}
 CELL_WIDTH = 3
 TIMING_MODES = ["beat", "subdivision", "note"]
 SOUND_DIR = Path.home() / ".pickme_sounds"
@@ -909,7 +910,7 @@ class TrainerApp:
         self.confirm_delete = False
 
         self.play_metronome = True
-        self.play_audio = True if pygame else False
+        self.play_audio = True
         self.current_notes_map = {}
 
         self.loop_a = None
@@ -937,47 +938,39 @@ class TrainerApp:
         self.init_audio()
 
     def init_audio(self):
-        if not pygame:
-            return
+        SOUND_DIR.mkdir(exist_ok=True)
+        metronome_path = SOUND_DIR / "metronome.wav"
+        if not metronome_path.exists():
+            sample_rate = 44100
+            duration = 0.1
+            n_samples = int(sample_rate * duration)
+            frames = bytearray(n_samples * 2)
+            for i in range(n_samples):
+                t = i / sample_rate
+                env = math.exp(-t / 0.03)
+                val = math.sin(2 * math.pi * 880 * t)
+                struct.pack_into("<h", frames, i * 2, int(6000 * env * val))
+            with wave.open(str(metronome_path), "w") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(sample_rate)
+                w.writeframesraw(frames)
+        self.metronome_path = metronome_path
+
+    def play_sound(self, path: Path):
+        import subprocess
+
         try:
-            pygame.mixer.pre_init(44100, -16, 2, 4096)
-            pygame.init()
-            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=4096)
-            pygame.mixer.set_num_channels(16)
-            metronome_path = SOUND_DIR / "metronome.wav"
-            if not metronome_path.exists():
-                SOUND_DIR.mkdir(exist_ok=True)
-                sample_rate = 44100
-                duration = 0.15
-                n_samples = int(sample_rate * duration)
-                frames = bytearray(n_samples * 2)
-                for i in range(n_samples):
-                    t = i / sample_rate
-                    env = math.exp(-t / 0.05)
-                    val = math.sin(2 * math.pi * 880 * t)
-                    struct.pack_into("<h", frames, i * 2, int(5000 * env * val))
-                with wave.open(str(metronome_path), "w") as w:
-                    w.setnchannels(1)
-                    w.setsampwidth(2)
-                    w.setframerate(sample_rate)
-                    w.writeframesraw(frames)
-            self.metronome_sound = pygame.mixer.Sound(str(metronome_path))
-            self.metronome_sound.set_volume(0.3)
-        except Exception as e:
-            self.play_audio = False
-            self.status = f"Audio init failed: {e}"
+            subprocess.Popen(
+                ["afplay", "-q", "1", str(path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
 
     def load_sound(self, path: Path):
-        if not pygame or not path:
-            return None
-        if str(path) in self.sound_cache:
-            return self.sound_cache[str(path)]
-        try:
-            sound = pygame.mixer.Sound(str(path))
-            self.sound_cache[str(path)] = sound
-            return sound
-        except Exception:
-            return None
+        return path
 
     def load_generated_lessons(self) -> List[Lesson]:
         lessons = []
@@ -1048,22 +1041,15 @@ class TrainerApp:
             if self.timing_mode == "beat" or (
                 self.playhead % (lesson_obj.steps_per_bar // 4) == 0
             ):
-                if self.play_metronome and self.metronome_sound:
-                    self.metronome_sound.play()
+                if self.play_metronome and hasattr(self, "metronome_path"):
+                    self.play_sound(self.metronome_path)
 
-            if self.play_audio and pygame:
-                for i in range(pygame.mixer.get_num_channels()):
-                    channel = pygame.mixer.Channel(i)
-                    if channel.get_busy():
-                        channel.stop()
+            if self.play_audio:
                 notes = self.current_notes_map.get(self.playhead, {})
                 for string_name, fret in notes.items():
                     wav_path = get_note_wav(string_name, fret)
                     if wav_path:
-                        snd = self.load_sound(wav_path)
-                        if snd:
-                            snd.set_volume(0.4)
-                            snd.play(fade_ms=30)
+                        self.play_sound(wav_path)
 
             self.playhead += 1
             self.last_tick += interval
@@ -1244,12 +1230,12 @@ class TrainerApp:
                     attr,
                 )
 
-        safe_addstr(self.stdscr, y + 7, x, "Finger:", curses.A_DIM)
+        safe_addstr(self.stdscr, y + 7, x, "RIGHT:", curses.A_DIM)
         for step in range(start, end):
             notes = self.current_notes_map.get(step, {})
             fingers_used = set()
             for s_name in notes.keys():
-                f = STRING_TO_FINGER.get(s_name)
+                f = STRING_TO_RIGHT_FINGER.get(s_name)
                 if f is not None:
                     fingers_used.add(int(f))
             if fingers_used:
@@ -1260,17 +1246,30 @@ class TrainerApp:
             safe_addstr(
                 self.stdscr,
                 y + 7,
-                x + 8 + (step - start) * CELL_WIDTH,
+                x + 7 + (step - start) * CELL_WIDTH,
                 finger_str.ljust(CELL_WIDTH),
                 attr,
             )
+
+    @staticmethod
+    def fret_to_left_finger(fret_num: int) -> str:
+        if fret_num == 0:
+            return "T"
+        elif fret_num <= 3:
+            return "1"
+        elif fret_num <= 6:
+            return "2"
+        elif fret_num <= 9:
+            return "3"
+        else:
+            return "4"
 
     def draw_fretboard(self, y: int, x: int, width: int, lesson_obj: Lesson):
         safe_addstr(
             self.stdscr,
             y,
             x,
-            "Fretboard Map (0=T 1=I 2=M 3=R 4=P)",
+            "LEFT HAND: fretting (0=T 1=I 2=M 3=R 4=P)",
             curses.A_BOLD | curses.A_DIM,
         )
         active_steps = active_steps_for_mode(
@@ -1295,13 +1294,9 @@ class TrainerApp:
         for i, s_name in enumerate(STRING_ORDER):
             safe_addstr(self.stdscr, y + 2 + i, x, f"{s_name}|", curses.A_BOLD)
             active_fret = current_notes.get(s_name)
-            finger_num = STRING_TO_FINGER.get(s_name, "")
-            finger_display = (
-                FINGER_NAMES.get(int(finger_num), "?") if finger_num else ""
-            )
             for f in range(num_frets + 1):
                 if active_fret == str(f):
-                    char = finger_display
+                    char = self.fret_to_left_finger(f)
                     attr = curses.A_REVERSE | curses.A_BOLD
                 else:
                     char = "-"
