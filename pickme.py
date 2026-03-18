@@ -49,6 +49,7 @@ STRING_TO_RIGHT_FINGER = {"e": "4", "B": "3", "G": "2", "D": "1", "A": "0", "E":
 FINGER_LOOKUP = {k.lower(): v for k, v in STRING_TO_RIGHT_FINGER.items()}
 CELL_WIDTH = 3
 TIMING_MODES = ["beat", "subdivision", "note"]
+AUDIO_BACKENDS = ["pygame", "sounddevice", "simpleaudio", "afplay"]
 SOUND_DIR = Path.home() / ".pickme_sounds"
 
 FOCUS_OPTIONS = [
@@ -1304,7 +1305,7 @@ class TrainerApp:
         mode = self.timing_mode
         loop_str = f"A:{self.loop_a if self.loop_a is not None else '-'} B:{self.loop_b if self.loop_b is not None else '-'}"
         speed_str = f"speed:{'ON' if self.speed_trainer else 'OFF'}"
-        audio_str = f"metro:{'ON' if self.play_metronome else 'OFF'} audio:{'ON' if self.play_audio else 'OFF'}"
+        audio_str = f"backend:{self.audio_backend} metro:{'ON' if self.play_metronome else 'OFF'} audio:{'ON' if self.play_audio else 'OFF'}"
 
         self.draw_header(
             lesson_obj.title,
@@ -1325,7 +1326,7 @@ class TrainerApp:
         self.draw_tab(tab_top, 2, w - 4, lesson_obj)
         self.draw_fretboard(tab_top + 11, 2, w - 4, lesson_obj)
 
-        hints = "space play | m metro | p audio | a/b marks | s speed | v split | +/- bpm | [ ] lesson | l loop | q back"
+        hints = "space play | m metro | p audio | o backend | a/b marks | s speed | v split | +/- bpm | [ ] lesson | l loop | q back"
         safe_addstr(self.stdscr, h - 3, 2, hints[: w - 4], curses.A_DIM)
 
     def draw_tab(self, y: int, x: int, width: int, lesson_obj: Lesson):
@@ -1591,6 +1592,16 @@ class TrainerApp:
             self.play_metronome = not self.play_metronome
         elif ch == ord("p"):
             self.play_audio = not self.play_audio
+        elif ch == ord("o"):
+            current_idx = (
+                AUDIO_BACKENDS.index(self.audio_backend)
+                if self.audio_backend in AUDIO_BACKENDS
+                else 0
+            )
+            next_idx = (current_idx + 1) % len(AUDIO_BACKENDS)
+            self.audio_backend = AUDIO_BACKENDS[next_idx]
+            self.init_audio()
+            self.status = f"Audio backend: {self.audio_backend}"
         return True
 
     def handle_generator_key(self, ch: int):
