@@ -25,6 +25,11 @@ try:
 except ImportError:
     pygame = None
 
+try:
+    import simpleaudio as sa
+except ImportError:
+    sa = None
+
 APP_NAME = "pickme"
 VERSION = "2.4"
 STRING_ORDER = ["e", "B", "G", "D", "A", "E"]
@@ -909,7 +914,7 @@ class TrainerApp:
         self.rename_buffer = ""
         self.confirm_delete = False
 
-        self.play_metronome = True
+        self.play_metronome = False
         self.play_audio = True
         self.current_notes_map = {}
 
@@ -934,23 +939,22 @@ class TrainerApp:
         }
         self.status = "Ready."
         self.sound_cache = {}
+        self.audio_backend = None
         self.init_audio()
 
     def init_audio(self):
-        import subprocess
-
         SOUND_DIR.mkdir(exist_ok=True)
         metronome_path = SOUND_DIR / "metronome.wav"
         if not metronome_path.exists():
             sample_rate = 44100
-            duration = 0.08
+            duration = 0.06
             n_samples = int(sample_rate * duration)
             frames = bytearray(n_samples * 2)
             for i in range(n_samples):
                 t = i / sample_rate
-                env = math.exp(-t / 0.025)
+                env = math.exp(-t / 0.02)
                 val = math.sin(2 * math.pi * 880 * t)
-                struct.pack_into("<h", frames, i * 2, int(4000 * env * val))
+                struct.pack_into("<h", frames, i * 2, int(3000 * env * val))
             with wave.open(str(metronome_path), "w") as w:
                 w.setnchannels(1)
                 w.setsampwidth(2)
@@ -958,19 +962,39 @@ class TrainerApp:
                 w.writeframesraw(frames)
         self.metronome_path = metronome_path
 
-    def play_sound(self, path: Path):
-        import subprocess
+        if sa is not None:
+            try:
+                self.metronome_wave = sa.WaveObject.from_wave_file(str(metronome_path))
+                self.audio_backend = "simpleaudio"
+                return
+            except Exception:
+                pass
 
+        self.audio_backend = "afplay"
+
+    def play_sound(self, path: Path):
         if not path or not path.exists():
             return
-        try:
-            subprocess.run(
-                ["afplay", "-q", "1", str(path)],
-                timeout=1,
-                capture_output=True,
-            )
-        except Exception:
-            pass
+
+        if self.audio_backend == "simpleaudio" and sa is not None:
+            try:
+                wave_obj = sa.WaveObject.from_wave_file(str(path))
+                wave_obj.play()
+                return
+            except Exception:
+                pass
+
+        if self.audio_backend == "afplay":
+            import subprocess
+
+            try:
+                subprocess.Popen(
+                    ["afplay", "-q", "1", str(path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass
 
     def load_generated_lessons(self) -> List[Lesson]:
         lessons = []
