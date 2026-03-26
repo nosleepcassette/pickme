@@ -49,8 +49,18 @@ STRING_TO_RIGHT_FINGER = {"e": "4", "B": "3", "G": "2", "D": "1", "A": "0", "E":
 FINGER_LOOKUP = {k.lower(): v for k, v in STRING_TO_RIGHT_FINGER.items()}
 CELL_WIDTH = 3
 TIMING_MODES = ["beat", "subdivision", "note"]
-AUDIO_BACKENDS = ["pygame", "sounddevice", "simpleaudio", "afplay"]
+AUDIO_BACKENDS = ["synth", "pygame", "sounddevice", "simpleaudio", "afplay"]
 SOUND_DIR = Path.home() / ".pickme_sounds"
+
+LOGO = [
+    "          ||          '||                        ",
+    "... ...  ...    ....   ||  ..  .. .. ..     .... ",
+    " ||'  ||  ||  .|   ''  || .'    || || ||  .|...||",
+    " ||    |  ||  ||       ||'|.    || || ||  ||     ",
+    " ||...'  .||.  '|...' .||. ||. .|| || ||.  '|...'",
+    " ||                                              ",
+    "''''                                             "
+]
 
 FOCUS_OPTIONS = [
     "thumb stability",
@@ -215,12 +225,14 @@ class Lesson:
         return cls(**payload)
 
 
-def script_dir() -> Path:
-    return Path(__file__).resolve().parent
+def get_app_dir() -> Path:
+    path = Path.home() / ".pickme"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def generated_dir() -> Path:
-    path = script_dir() / "generated.lessons"
+    path = get_app_dir() / "generated.lessons"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -965,6 +977,29 @@ class TrainerApp:
         tone = np.sin(2 * np.pi * freq * t) * envelope * volume
         return tone.astype(np.float32)
 
+    def generate_synth_tone(
+        self, freq: float, duration: float = 1.0, volume: float = 0.5
+    ) -> np.ndarray:
+        if np is None:
+            return None
+        t = np.linspace(0, duration, int(self.sample_rate * duration), False)
+        # Advanced synthesis using harmonics to simulate plucked string
+        tone = np.zeros_like(t)
+        harmonics = [1.0, 0.4, 0.2, 0.1, 0.05]
+        for i, h_amp in enumerate(harmonics):
+            h_freq = freq * (i + 1)
+            decay = np.exp(-t * (3.0 + i * 1.5))
+            tone += h_amp * np.sin(2 * np.pi * h_freq * t) * decay
+        
+        envelope = np.exp(-t / (duration * 0.8))
+        tone = tone * envelope * volume
+        
+        max_val = np.max(np.abs(tone))
+        if max_val > 0:
+            tone = tone / max_val * volume
+            
+        return tone.astype(np.float32)
+
     def init_audio(self):
         if self.audio_backend == "pygame" and pygame is not None:
             if not getattr(self, "pygame_ready", False):
@@ -975,7 +1010,7 @@ class TrainerApp:
                     self.pygame_ready = True
                 except Exception:
                     self.pygame_ready = False
-        elif self.audio_backend == "sounddevice" and sd is not None and np is not None:
+        elif self.audio_backend in ("sounddevice", "synth") and sd is not None and np is not None:
             try:
                 sd.play(np.zeros(1), self.sample_rate)
                 sd.stop()
@@ -1007,6 +1042,15 @@ class TrainerApp:
             if tone is not None:
                 sd.play(tone, self.sample_rate)
                 # Removing sd.sleep() to prevent blocking the main loop
+        except Exception:
+            pass
+
+    def play_note_synth(self, string_name: str, fret: str):
+        try:
+            freq = self.get_frequency(string_name, fret)
+            tone = self.generate_synth_tone(freq, 1.0, 0.6)
+            if tone is not None:
+                sd.play(tone, self.sample_rate)
         except Exception:
             pass
 
@@ -1093,7 +1137,7 @@ class TrainerApp:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-            elif self.audio_backend == "sounddevice":
+            elif self.audio_backend in ("sounddevice", "synth"):
                 freq = 880
                 tone = self.generate_tone(freq, 0.05, 0.8)
                 if tone is not None:
@@ -1102,7 +1146,9 @@ class TrainerApp:
             pass
 
     def play_note_sound(self, string_name: str, fret: str):
-        if self.audio_backend == "afplay":
+        if self.audio_backend == "synth":
+            self.play_note_synth(string_name, fret)
+        elif self.audio_backend == "afplay":
             self.play_note_afplay(string_name, fret)
         elif self.audio_backend == "pygame":
             self.play_note_pygame(string_name, fret)
@@ -1237,11 +1283,11 @@ class TrainerApp:
         safe_addstr(self.stdscr, height - 1, 1, footer, curses.A_DIM)
         self.stdscr.refresh()
 
-    def draw_header(self, title: str, subtitle: str = ""):
-        safe_addstr(self.stdscr, 0, 2, APP_NAME, curses.A_BOLD)
-        safe_addstr(self.stdscr, 1, 2, title, curses.A_UNDERLINE)
+    def draw_header(self, title: str, subtitle: str = "", y_offset: int = 0):
+        safe_addstr(self.stdscr, y_offset, 2, APP_NAME, curses.A_BOLD)
+        safe_addstr(self.stdscr, y_offset + 1, 2, title, curses.A_UNDERLINE)
         if subtitle:
-            safe_addstr(self.stdscr, 2, 2, subtitle)
+            safe_addstr(self.stdscr, y_offset + 2, 2, subtitle)
 
     def draw_wrapped_block(
         self, y: int, x: int, width: int, text: str, attr: int = 0
@@ -1253,11 +1299,19 @@ class TrainerApp:
 
     def draw_library(self):
         h, w = self.stdscr.getmaxyx()
-        self.draw_header("Lesson Library", "Open a lesson, generate, or import.")
-        top = 4
-        visible = h - 7
-        start = max(0, self.library_index - visible // 2)
-        end = min(len(self.lessons), start + visible)
+        
+        logo_height = len(LOGO)
+        for i, line in enumerate(LOGO):
+            x = max(0, (w - len(line)) // 2)
+            safe_addstr(self.stdscr, i, x, line, curses.A_BOLD)
+
+        top = logo_height + 2
+        self.draw_header("Lesson Library", "Open a lesson, generate, or import.", y_offset=top)
+        top += 4
+        
+        visible = h - top - 3
+        start = max(0, self.library_index - max(1, visible // 2))
+        end = min(len(self.lessons), start + max(1, visible))
 
         safe_addstr(
             self.stdscr,
@@ -1745,7 +1799,7 @@ def main():
     )
     parser.add_argument(
         "--audio-backend",
-        choices=["pygame", "sounddevice", "simpleaudio", "afplay", "auto"],
+        choices=["synth", "pygame", "sounddevice", "simpleaudio", "afplay", "auto"],
         default="auto",
         help="audio backend to use (default: auto)",
     )
@@ -1757,14 +1811,14 @@ def main():
 
     backend = args.audio_backend
     if backend == "auto":
-        if sa is not None:
+        if sd is not None and np is not None:
+            backend = "synth"
+        elif sa is not None:
             backend = "simpleaudio"
         elif pygame is not None:
             backend = "pygame"
         elif shutil.which("afplay"):
             backend = "afplay"
-        elif sd is not None and np is not None:
-            backend = "sounddevice"
         else:
             backend = "afplay"
 

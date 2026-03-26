@@ -263,3 +263,51 @@ Recommended scope:
 - **Progress Tracking:** Local SQLite database to track practice time, BPM records, and visualize consistency.
 - **TUI Tab Editor:** A dedicated authoring view to manually write, edit, and save fingerpicking patterns.
 - **ASCII Fretboard Visualization:** Real-time visual representation of the fretboard alongside the scrolling tab.
+
+## Phase 6 spec: Package Distribution & Audio Backend Upgrades
+
+### Goal
+Establish `pickme` as a fully distributable system-independent Python package and implement a robust, cross-platform audio synthesis backend.
+
+### Features
+- **Proper Package Management:** Distribute via PyPI using modern `pyproject.toml` standards.
+- **System-Independent Data Storage:** Store all generated lessons, sound caches, and config files in `~/.pickme` or an OS-appropriate data directory instead of relative to the script.
+- **Synthesizer Integration:** Move away from pre-rendered `.wav` files and implement real-time tone synthesis (e.g., using `miniaudio`, `pysoundio`, or a pure NumPy synthesis engine) to enable:
+  - Better dynamic control (velocity sensing, palm-muting emulation).
+  - Reduced storage overhead (no need for a `.pickme_sounds` cache directory).
+  - Variable tone options (nylon, steel, electric, metronome ticks).
+- **Backend Abstraction:** Create a robust audio backend factory pattern to gracefully fall back on available system libraries (e.g., ALSA on Linux, CoreAudio on macOS, WASAPI on Windows) avoiding heavy dependencies where possible.
+- **Latency Optimizations:** Reduce the audio latency when generating dynamic tones during playback, ensuring tight alignment with the visual metronome.
+
+## Phase 7 spec: Smart Tab Importer Upgrades
+
+### Goal
+Upgrade the tab parsing heuristic engine to intelligently parse, strip, and structure complex online tab formatting, creating a seamless and enriched practice experience.
+
+### Features
+Ranked from easiest to hardest to build:
+
+1. **Chord Shape Stripping (Easy):** 
+   - Detect and discard ASCII chord definitions and standalone text blocks at the beginning or end of tabs that do not contain actual timeline-based fingerpicking tab lines.
+   - Look for standard patterns like `e|-3-|` combined with chord names like `G`.
+
+2. **Provided Chord Shape Display (Medium):** 
+   - When a tab natively includes chord names immediately above a block of tabs, parse those names and align them with the correct step on the UI timeline.
+   - E.g., handling tabs like:
+     ```
+     G                  Bm
+     e|-----------|      e|-----------|
+     ```
+
+3. **Lyrics Alignment (Medium-Hard):** 
+   - Parse and extract lyrical lines that are interleaved between tab blocks.
+   - Synchronize the lyrics to the beat guide / timeline in the player UI based on text placement relative to the tab columns above or below. 
+   - Requires robust handling of varied spacing standards used in different online tabs.
+
+4. **Dual-line Tab Support (Hard):**
+   - Correctly interpret multi-line structural tabs where line 1 represents the high-level chord shapes and line 2 provides the exact fingerpicking numbers. 
+   - Condense these into a single playable event structure in the internal JSON format, and render the chord shape as text above the played tab on the UI.
+
+5. **Smart Chord Auto-generation (Hardest):**
+   - Implement an intelligent algorithm to analyze a series of plucked notes and deduce the most likely underlying chord shape.
+   - Must contain a noise-reduction heuristic: prioritize common open chords and standard voicings, and ignore random passing notes or 3-note fragments so it doesn't try to name every single cluster a bizarre diminished flat-nine chord.

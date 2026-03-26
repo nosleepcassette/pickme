@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pickme"
+version = "2.4.0"
+description = "Cassette Finger Trainer"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "sounddevice",
+    "numpy",
+]
+
+[project.scripts]
+pickme = "pickme.cli:main"
