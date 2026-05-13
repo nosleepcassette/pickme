@@ -3,7 +3,7 @@
 ## [2.4] - 2025-03-17
 
 ### Added
-- Multiple audio backend support (pygame, sounddevice, simpleaudio, afplay)
+- Multiple audio backend support (pygame, sounddevice, afplay)
 - --audio-backend command line argument for selecting audio backend
 - Left hand finger display on fretboard (which finger to fret)
 - Right hand finger display under tab (which finger to pluck)

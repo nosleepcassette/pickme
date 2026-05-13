@@ -7,11 +7,16 @@ A terminal-based guitar fingerpicking practice application for macOS.
 
 ## Version History
 
+<<<<<<< Updated upstream
 ### v2.4.0 (current)
 - Packaged as a standard Python project (via `pyproject.toml`).
 - Implemented real-time tone synthesis (`synth` backend) using `numpy` and `sounddevice`, defaulting to it when available.
 - Embedded terminal ASCII logo.
 - Multiple audio backend support: synth, pygame, sounddevice, simpleaudio, afplay
+=======
+### v2.4 (current)
+- Multiple audio backend support: pygame, sounddevice, afplay
+>>>>>>> Stashed changes
 - Select audio backend via --audio-backend flag
 - Left hand finger display on fretboard (which finger to fret)
 - Right hand finger display under tab (which finger to pluck)
@@ -49,7 +54,13 @@ A terminal-based guitar fingerpicking practice application for macOS.
 You can install `pickme` directly from the repository using pip:
 
 ```bash
+<<<<<<< Updated upstream
 pip install -e .
+=======
+pip install pygame
+pip install sounddevice numpy
+python3 pickme.py
+>>>>>>> Stashed changes
 ```
 
 This will also automatically install the required `sounddevice` and `numpy` dependencies.
@@ -57,11 +68,17 @@ This will also automatically install the required `sounddevice` and `numpy` depe
 ## Usage
 
 ```bash
+<<<<<<< Updated upstream
 pickme
 pickme --audio-backend synth
 pickme --audio-backend pygame
 pickme --audio-backend simpleaudio
 pickme --audio-backend afplay
+=======
+python3 pickme.py --audio-backend pygame
+python3 pickme.py --audio-backend sounddevice
+python3 pickme.py --audio-backend afplay
+>>>>>>> Stashed changes
 ```
 
 ## Audio Backends
@@ -72,7 +89,6 @@ pickme --audio-backend afplay
 | synth | sounddevice, numpy |
 | pygame | pygame |
 | sounddevice | sounddevice, numpy |
-| simpleaudio | simpleaudio |
 | afplay | none |
 
 ## TODO (Smart Tab Parsing Features)
@@ -86,3 +102,13 @@ pickme --audio-backend afplay
 ## License
 
 MIT
+
+---
+
+## support this work
+
+maps is currently navigating severe financial precarity and is at real risk of losing her housing. if this project has been useful to you — or you just think what she's building is worth keeping alive — please consider throwing a few dollars her way. it goes directly toward keeping the lights on.
+
+[ko-fi.com/nosleepcassette](https://ko-fi.com/nosleepcassette) · venmo: **@keaghoul** · cashapp: **$keaghoul** · [cassette.help](https://cassette.help)
+
+<!-- cassette.help/donate -->
